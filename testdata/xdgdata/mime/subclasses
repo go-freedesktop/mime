@@ -1,0 +1,5 @@
+# subclasses
+application/xml text/plain
+application/x-compressed-tar application/gzip
+image/svg+xml application/xml
+
