@@ -1,0 +1,13 @@
+# Shared MIME-info globs2 test fixture
+50:text/plain:*.txt
+50:application/pdf:*.pdf
+60:application/x-trash:*~
+50:text/x-makefile:Makefile
+50:application/gzip:*.gz
+70:application/x-compressed-tar:*.tar.gz
+50:image/svg+xml:*.svg:cs
+50:image/png:*.png
+50:application/xml:*.xml
+50:image/jpeg:*.jpeg
+40:image/jpeg:*.jpg
+

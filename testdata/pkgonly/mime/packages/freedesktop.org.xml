@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/pdf">
+    <comment>PDF document</comment>
+    <glob pattern="*.pdf"/>
+    <magic priority="50">
+      <match type="string" value="%PDF-" offset="0"/>
+    </magic>
+  </mime-type>
+
+  <mime-type type="image/png">
+    <glob pattern="*.png"/>
+    <alias type="image/x-png"/>
+    <magic priority="50">
+      <match type="string" value="\x89PNG\r\n\x1a\n" offset="0"/>
+    </magic>
+  </mime-type>
+
+  <mime-type type="text/plain">
+    <glob pattern="*.txt"/>
+    <glob pattern="Makefile" weight="60"/>
+  </mime-type>
+
+  <mime-type type="application/xml">
+    <sub-class-of type="text/plain"/>
+    <glob pattern="*.xml"/>
+    <magic priority="40">
+      <match type="string" value="&lt;?xml" offset="0:64"/>
+    </magic>
+  </mime-type>
+
+  <mime-type type="image/svg+xml">
+    <sub-class-of type="application/xml"/>
+    <glob pattern="*.svg" case-sensitive="true"/>
+    <magic priority="80">
+      <match type="string" value="&lt;svg" offset="0:64"/>
+    </magic>
+  </mime-type>
+
+  <mime-type type="application/gzip">
+    <alias type="application/x-gzip"/>
+    <glob pattern="*.gz"/>
+    <magic priority="50">
+      <match type="byte" value="0x1f" offset="0">
+        <match type="byte" value="0x8b" offset="1"/>
+      </match>
+    </magic>
+  </mime-type>
+
+  <mime-type type="application/x-numbers">
+    <magic priority="50">
+      <match type="big16" value="0xcafe" offset="0"/>
+      <match type="little16" value="0xcafe" offset="0"/>
+      <match type="host32" value="0x01020304" offset="4"/>
+      <match type="byte" value="7" offset="8"/>
+    </magic>
+  </mime-type>
+
+  <mime-type type="application/x-masked">
+    <magic priority="50">
+      <match type="string" value="\xff\x00" mask="0xf000" offset="0"/>
+    </magic>
+  </mime-type>
+
+  <mime-type type="application/x-escapes">
+    <magic priority="50">
+      <match type="string" value="\t\n\r\f\v\b\\\064" offset="0"/>
+    </magic>
+  </mime-type>
+</mime-info>
