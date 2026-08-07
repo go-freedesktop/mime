@@ -148,6 +148,5 @@ BSD-3-Clause. Copyright (c) the go-freedesktop/mime authors.
 
 ---
 
-> **Note:** the `go-freedesktop` org landing page and MkDocs site are deferred
-> to the Wave-2 documentation sweep; this repo ships the README and `.github`
-> workflow for now.
+> The `go-freedesktop` org [landing page](https://go-freedesktop.github.io/) and
+> [MkDocs documentation site](https://go-freedesktop.github.io/docs/) are live.
