@@ -27,6 +27,45 @@ type magicRule struct {
 	typ      string
 	priority int
 	matches  []*magicMatch
+	// canStart is a first-byte reject filter: it holds every byte value that
+	// data[0] could take for any top-level match of this rule to possibly
+	// succeed. A rule whose filter excludes data[0] cannot match, so the
+	// expensive tree walk is skipped. Rules with a top-level match that is not
+	// anchored at offset 0 (an offset range or a non-zero start) accept every
+	// byte, so the filter never rejects a rule that could genuinely match.
+	canStart byteSet
+}
+
+// byteSet is a 256-bit set of byte values.
+type byteSet [4]uint64
+
+func (s *byteSet) set(b byte)      { s[b>>6] |= 1 << (b & 63) }
+func (s *byteSet) has(b byte) bool { return s[b>>6]&(1<<(b&63)) != 0 }
+func (s *byteSet) setAll() {
+	s[0], s[1], s[2], s[3] = ^uint64(0), ^uint64(0), ^uint64(0), ^uint64(0)
+}
+
+// buildCanStart computes the rule's first-byte reject filter from its top-level
+// matches. A match anchored at offset 0 with a single start position constrains
+// data[0] to its (optionally masked) first value byte; any other match leaves
+// data[0] unconstrained.
+func (r *magicRule) buildCanStart() {
+	for _, m := range r.matches {
+		if m.rangeStart != 0 || m.rangeLen != 1 || len(m.value) == 0 {
+			r.canStart.setAll()
+			return
+		}
+		if m.mask == nil {
+			r.canStart.set(m.value[0])
+			continue
+		}
+		want := m.value[0] & m.mask[0]
+		for b := 0; b < 256; b++ {
+			if byte(b)&m.mask[0] == want {
+				r.canStart.set(byte(b))
+			}
+		}
+	}
 }
 
 // selfMatch reports whether the node's value matches within its offset range,
@@ -85,12 +124,19 @@ func equalMasked(region, value, mask []byte) bool {
 // magicLookup returns the highest-priority type whose magic matches data, and
 // that priority. On a priority tie the earliest-registered rule wins.
 func (db *Database) magicLookup(data []byte) (string, int) {
+	if len(data) == 0 {
+		return "", -1
+	}
+	first := data[0]
 	best := ""
 	bestPrio := -1
 	for i := range db.magics {
 		r := &db.magics[i]
 		if r.priority <= bestPrio {
 			continue
+		}
+		if !r.canStart.has(first) {
+			continue // no top-level match can start with this byte
 		}
 		for _, m := range r.matches {
 			if m.match(data) {
@@ -104,11 +150,15 @@ func (db *Database) magicLookup(data []byte) (string, int) {
 }
 
 // sortMagics orders rules by descending priority so magicLookup's early-out on
-// r.priority <= bestPrio is sound, keeping registration order among ties.
+// r.priority <= bestPrio is sound, keeping registration order among ties, and
+// builds each rule's first-byte reject filter.
 func (db *Database) sortMagics() {
 	sort.SliceStable(db.magics, func(i, j int) bool {
 		return db.magics[i].priority > db.magics[j].priority
 	})
+	for i := range db.magics {
+		db.magics[i].buildCanStart()
+	}
 }
 
 // ---- binary "magic" file parser ----

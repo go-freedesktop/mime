@@ -38,6 +38,18 @@ func TestMagicLookupFixture(t *testing.T) {
 	}
 }
 
+func TestMagicLookupEmptyData(t *testing.T) {
+	db := fixtureDB(t)
+	// The public entry points guard zero-length data, but magicLookup also
+	// rejects it directly so its first-byte index never indexes out of range.
+	if got, prio := db.magicLookup(nil); got != "" || prio != -1 {
+		t.Errorf("magicLookup(nil) = %q,%d; want \"\",-1", got, prio)
+	}
+	if got, prio := db.magicLookup([]byte{}); got != "" || prio != -1 {
+		t.Errorf("magicLookup(empty) = %q,%d; want \"\",-1", got, prio)
+	}
+}
+
 func TestMagicNestedChildFails(t *testing.T) {
 	db := fixtureDB(t)
 	// Parent "AB" matches but child "CD" at offset 4 is absent.
