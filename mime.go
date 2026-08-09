@@ -48,7 +48,17 @@ const magicSniffLen = 256
 // for use; build one with New, Load, or LoadDir. A Database is safe for
 // concurrent reads once fully built.
 type Database struct {
-	globs      []glob
+	// Glob lookup is served from precomputed indexes built as patterns are
+	// registered (addGlob), so a name lookup never rescans every pattern:
+	// literals resolve through a map, "*.ext" suffixes through a reverse trie
+	// keyed on the tail characters (longest match wins), and only the handful
+	// of arbitrary fnmatch patterns remain a linear scan.
+	litCS      map[string][]glob // case-sensitive literals, keyed by exact name
+	litCI      map[string][]glob // case-insensitive literals, keyed by lower name
+	suffixRoot *suffixNode       // reverse trie of "*.ext" suffix tails
+	fullGlobs  []glob            // arbitrary fnmatch patterns (few)
+	globSeq    int               // registration counter for stable weight ties
+
 	magics     []magicRule
 	aliases    map[string]string   // alias -> canonical
 	revAliases map[string][]string // canonical -> aliases

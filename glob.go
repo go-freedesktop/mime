@@ -21,24 +21,79 @@ const (
 
 // glob is one registered pattern -> type association.
 type glob struct {
-	pattern string
-	typ     string
-	weight  int
-	cs      bool // case-sensitive match
-	kind    globKind
-	suffix  string // the tail after '*' for globSuffix
+	pattern    string
+	patternLow string // lower-cased pattern, precomputed for case-insensitive fnmatch
+	typ        string
+	weight     int
+	cs         bool // case-sensitive match
+	kind       globKind
+	suffix     string // the tail after '*' for globSuffix (original case)
+	suffixLow  string // lower-cased suffix, precomputed
+	seq        int    // registration order, for stable weight ties
+}
+
+// suffixNode is one node of the reverse trie built over "*.ext" suffix tails.
+// A name matches a stored suffix when, reading the name from its last byte
+// backwards, every byte follows an edge until the stored suffix is exhausted;
+// the deepest such node with a matching glob is the longest matching suffix.
+type suffixNode struct {
+	children map[byte]*suffixNode
+	globs    []glob // globs whose (lower-cased) suffix ends exactly here
 }
 
 // defaultGlobWeight is the weight assigned when a pattern declares none.
 const defaultGlobWeight = 50
 
-// addGlob classifies and registers a pattern.
+// addGlob classifies and registers a pattern into the appropriate lookup index.
 func (db *Database) addGlob(pattern, typ string, weight int, cs bool) {
-	g := glob{pattern: pattern, typ: typ, weight: weight, cs: cs, kind: classifyGlob(pattern)}
-	if g.kind == globSuffix {
-		g.suffix = pattern[1:]
+	g := glob{
+		pattern:    pattern,
+		patternLow: strings.ToLower(pattern),
+		typ:        typ,
+		weight:     weight,
+		cs:         cs,
+		kind:       classifyGlob(pattern),
+		seq:        db.globSeq,
 	}
-	db.globs = append(db.globs, g)
+	db.globSeq++
+
+	switch g.kind {
+	case globLiteral:
+		if cs {
+			if db.litCS == nil {
+				db.litCS = map[string][]glob{}
+			}
+			db.litCS[pattern] = append(db.litCS[pattern], g)
+		} else {
+			if db.litCI == nil {
+				db.litCI = map[string][]glob{}
+			}
+			low := g.patternLow
+			db.litCI[low] = append(db.litCI[low], g)
+		}
+	case globSuffix:
+		g.suffix = pattern[1:]
+		g.suffixLow = strings.ToLower(g.suffix)
+		if db.suffixRoot == nil {
+			db.suffixRoot = &suffixNode{}
+		}
+		node := db.suffixRoot
+		s := g.suffixLow
+		for i := len(s) - 1; i >= 0; i-- {
+			if node.children == nil {
+				node.children = map[byte]*suffixNode{}
+			}
+			next := node.children[s[i]]
+			if next == nil {
+				next = &suffixNode{}
+				node.children[s[i]] = next
+			}
+			node = next
+		}
+		node.globs = append(node.globs, g)
+	default: // globFull
+		db.fullGlobs = append(db.fullGlobs, g)
+	}
 }
 
 // classifyGlob determines which precedence tier a pattern falls into.
@@ -53,61 +108,37 @@ func classifyGlob(pattern string) globKind {
 }
 
 // globMatches applies the spec precedence rules to a base file name and returns
-// the winning tier's types ordered by descending weight (deduplicated).
+// the winning tier's types ordered by descending weight (deduplicated). It
+// consults the precomputed indexes in precedence order: literal names, then the
+// longest matching "*.ext" suffix, then arbitrary fnmatch patterns.
 func (db *Database) globMatches(name string) []string {
 	lower := strings.ToLower(name)
 
-	var literals, suffixes, fulls []glob
-	var bestSuffixLen int
-
-	for _, g := range db.globs {
-		switch g.kind {
-		case globLiteral:
-			if g.cs {
-				if name == g.pattern {
-					literals = append(literals, g)
-				}
-			} else if lower == strings.ToLower(g.pattern) {
-				literals = append(literals, g)
-			}
-		case globSuffix:
-			suf := g.suffix
-			hit := false
-			if g.cs {
-				hit = strings.HasSuffix(name, suf)
-			} else {
-				hit = strings.HasSuffix(lower, strings.ToLower(suf))
-			}
-			if hit {
-				if len(suf) > bestSuffixLen {
-					bestSuffixLen = len(suf)
-				}
-				suffixes = append(suffixes, g)
-			}
-		default: // globFull
-			target := name
-			pat := g.pattern
-			if !g.cs {
-				target, pat = lower, strings.ToLower(g.pattern)
-			}
-			if fnmatch(pat, target) {
-				fulls = append(fulls, g)
-			}
-		}
-	}
-
-	if len(literals) > 0 {
+	// Literal tier: an exact name (case-sensitive) or its lower-cased form
+	// (case-insensitive). Both index buckets belong to the same tier.
+	if literals := db.literalMatches(name, lower); len(literals) > 0 {
 		return topByWeight(literals)
 	}
-	if len(suffixes) > 0 {
-		// Keep only the longest matching suffix, then rank by weight.
-		longest := suffixes[:0]
-		for _, g := range suffixes {
-			if len(g.suffix) == bestSuffixLen {
-				longest = append(longest, g)
-			}
+
+	// Suffix tier: walk the reverse trie from the end of the name and use the
+	// deepest node that holds at least one glob actually matching this name
+	// (a case-sensitive glob must also match in its original case). Because a
+	// string has exactly one suffix of any given length, that deepest node is
+	// the unique longest-matching-suffix tier.
+	if suffixes := db.suffixMatches(name, lower); len(suffixes) > 0 {
+		return topByWeight(suffixes)
+	}
+
+	// Full-glob tier: only arbitrary fnmatch patterns remain here.
+	var fulls []glob
+	for _, g := range db.fullGlobs {
+		target, pat := name, g.pattern
+		if !g.cs {
+			target, pat = lower, g.patternLow
 		}
-		return topByWeight(longest)
+		if fnmatch(pat, target) {
+			fulls = append(fulls, g)
+		}
 	}
 	if len(fulls) > 0 {
 		return topByWeight(fulls)
@@ -115,26 +146,100 @@ func (db *Database) globMatches(name string) []string {
 	return nil
 }
 
-// topByWeight returns the distinct types of gs ordered by descending weight,
-// preserving registration order among equal weights.
-func topByWeight(gs []glob) []string {
-	// Stable insertion sort by weight (small lists; keeps first-seen order on ties).
-	sorted := make([]glob, len(gs))
-	copy(sorted, gs)
-	for i := 1; i < len(sorted); i++ {
-		for j := i; j > 0 && sorted[j-1].weight < sorted[j].weight; j-- {
-			sorted[j-1], sorted[j] = sorted[j], sorted[j-1]
+// literalMatches gathers the literal-tier globs matching name from both the
+// case-sensitive and case-insensitive buckets.
+func (db *Database) literalMatches(name, lower string) []glob {
+	var out []glob
+	if gs, ok := db.litCS[name]; ok {
+		out = append(out, gs...)
+	}
+	if gs, ok := db.litCI[lower]; ok {
+		out = append(out, gs...)
+	}
+	return out
+}
+
+// suffixMatches returns the globs of the longest "*.ext" suffix that matches
+// name, or nil. It records every trie node reached while reading name backwards
+// and then, from the deepest reached node outward, returns the first node whose
+// globs actually match (honouring case sensitivity).
+func (db *Database) suffixMatches(name, lower string) []glob {
+	node := db.suffixRoot
+	if node == nil {
+		return nil
+	}
+	// Collect terminal-bearing nodes along the path, deepest last.
+	var path []*suffixNode
+	for i := len(lower) - 1; i >= 0; i-- {
+		next := node.children[lower[i]]
+		if next == nil {
+			break
+		}
+		node = next
+		if len(node.globs) > 0 {
+			path = append(path, node)
 		}
 	}
-	seen := map[string]bool{}
-	out := make([]string, 0, len(sorted))
-	for _, g := range sorted {
-		if !seen[g.typ] {
-			seen[g.typ] = true
+	for i := len(path) - 1; i >= 0; i-- {
+		matched := suffixNodeMatches(path[i].globs, name)
+		if len(matched) > 0 {
+			return matched
+		}
+	}
+	return nil
+}
+
+// suffixNodeMatches filters a node's globs to those that match name. The lower
+// path already guarantees the suffix matches case-insensitively; a
+// case-sensitive glob must additionally match in the name's original case.
+func suffixNodeMatches(gs []glob, name string) []glob {
+	var out []glob
+	for _, g := range gs {
+		if g.cs && !strings.HasSuffix(name, g.suffix) {
+			continue
+		}
+		out = append(out, g)
+	}
+	return out
+}
+
+// topByWeight returns the distinct types of gs ordered by descending weight,
+// breaking ties by ascending registration order (seq) so the result is
+// independent of the order the index buckets yielded the globs in. It sorts gs
+// in place; callers pass freshly built, owned slices. The only allocation is
+// the returned slice, and dedup is a linear scan because match sets are tiny.
+func topByWeight(gs []glob) []string {
+	// Insertion sort by (weight desc, seq asc); lists are tiny.
+	for i := 1; i < len(gs); i++ {
+		for j := i; j > 0 && less(gs[j], gs[j-1]); j-- {
+			gs[j-1], gs[j] = gs[j], gs[j-1]
+		}
+	}
+	out := make([]string, 0, len(gs))
+	for _, g := range gs {
+		if !containsString(out, g.typ) {
 			out = append(out, g.typ)
 		}
 	}
 	return out
+}
+
+// containsString reports whether s is already present in out.
+func containsString(out []string, s string) bool {
+	for _, v := range out {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
+// less orders globs by descending weight, then ascending registration order.
+func less(a, b glob) bool {
+	if a.weight != b.weight {
+		return a.weight > b.weight
+	}
+	return a.seq < b.seq
 }
 
 // fnmatch reports whether pattern matches s using shell glob semantics:
