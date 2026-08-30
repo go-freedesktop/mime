@@ -24,7 +24,7 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version: stable
       - run: go version
@@ -58,7 +58,7 @@ jobs:
           - { os: ubuntu-24.04-arm, label: arm64 }
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version: stable
       - run: go env GOARCH && CGO_ENABLED=0 go test ./...
@@ -76,7 +76,7 @@ jobs:
           - { goarch: s390x,   qemu: qemu-s390x-static }
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version: stable
       - run: sudo apt-get update && sudo apt-get install -y qemu-user-static
