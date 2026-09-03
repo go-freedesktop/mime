@@ -60,8 +60,20 @@ type xmlSubclass struct {
 func (db *Database) AddPackagesDir(dir string) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
+		// "A missing directory is not an error" must not quietly become "a
+		// path that is a FILE is not an error". os.IsNotExist is the wrong
+		// question for that: on Windows, reading a regular file as a
+		// directory reports ERROR_PATH_NOT_FOUND, which syscall maps to
+		// ErrNotExist (syscall_windows.go, Errno.Is), so this returned nil
+		// and the caller's mistake became a silent no-op. It surfaced the
+		// moment a Windows lane existed.
+		//
+		// Ask the filesystem what the path IS rather than inferring it from
+		// an errno that differs per platform.
+		if fi, statErr := os.Stat(dir); statErr != nil || fi.IsDir() {
+			if os.IsNotExist(err) {
+				return nil
+			}
 		}
 		return err
 	}
