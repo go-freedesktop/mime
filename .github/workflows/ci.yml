@@ -18,18 +18,26 @@ jobs:
   test:
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    # CGO_ENABLED belongs in env, not in front of the command.
+    # `- run: CGO_ENABLED=0 go vet ./...` is a POSIX-shell assignment, and the
+    # Windows runner uses PowerShell, which reads it as a command it cannot
+    # find: "The term 'CGO_ENABLED=0' is not recognized". That is the whole
+    # reason this job never ran on Windows. go-freedesktop/x11 already sets it
+    # this way.
+    env:
+      CGO_ENABLED: "0"
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version: stable
       - run: go version
-      - run: CGO_ENABLED=0 go vet ./...
-      - run: CGO_ENABLED=0 go build ./...
+      - run: go vet ./...
+      - run: go build ./...
       - name: Test + 100% coverage gate
         shell: bash
         # -race needs cgo, so this step (and only this step) enables it. The
