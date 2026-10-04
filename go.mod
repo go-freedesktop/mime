@@ -1,6 +1,6 @@
 module github.com/go-freedesktop/mime
 
-go 1.26.4
+go 1.27.1
 
 require github.com/adrg/xdg v0.5.3
 
